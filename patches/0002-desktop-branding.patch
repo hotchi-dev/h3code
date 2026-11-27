@@ -1,0 +1,330 @@
+From 9f669c3566b2fdd22c8dab8302f27261ebc21340 Mon Sep 17 00:00:00 2001
+From: Emi Griffith <me@emigriffith.dev>
+Date: Fri, 27 Nov 2026 14:10:15 -0800
+Subject: [PATCH] Brand desktop artifacts and updates as H3 Code
+
+Agent-Model: codex/gpt-6.2-sol
+---
+ apps/desktop/package.json                     |  2 +-
+ apps/desktop/resources/installer.nsh          |  8 ++--
+ .../linux/com.t3tools.t3code.metainfo.xml     | 22 ++++-----
+ .../src/app/DesktopEarlyElectronStartup.ts    |  2 +-
+ apps/desktop/src/app/DesktopEnvironment.ts    |  4 +-
+ .../desktop/src/app/DesktopStartupRecovery.ts |  2 +-
+ apps/web/index.html                           |  6 +--
+ packages/shared/src/cliRelease.ts             |  2 +-
+ scripts/build-desktop-artifact.ts             | 47 +++++++++----------
+ 9 files changed, 47 insertions(+), 48 deletions(-)
+
+diff --git a/apps/desktop/package.json b/apps/desktop/package.json
+index 0a328510..9215e583 100644
+--- a/apps/desktop/package.json
++++ b/apps/desktop/package.json
+@@ -44,5 +44,5 @@
+     "tailwindcss": "^4.0.0",
+     "vite-plus": "catalog:"
+   },
+-  "productName": "T3 Code (Beta)"
++  "productName": "H3 Code (Beta)"
+ }
+diff --git a/apps/desktop/resources/installer.nsh b/apps/desktop/resources/installer.nsh
+index bff93bf0..8bfe7b17 100644
+--- a/apps/desktop/resources/installer.nsh
++++ b/apps/desktop/resources/installer.nsh
+@@ -16,14 +16,14 @@
+   Push $1
+   ${If} $IsPowerShellAvailable == 0
+     System::Call 'kernel32::SetEnvironmentVariable(t "T3CODE_INSTALL_DIR", t "$INSTDIR")'
+-    nsExec::ExecToStack `"$PowerShellPath" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | Where-Object { $$_.ExecutablePath -and [IO.Path]::GetDirectoryName($$_.ExecutablePath) -eq $$env:T3CODE_INSTALL_DIR } | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($$_.ExecutablePath) } | Where-Object { $$_ -in 'T3 Code (Alpha)', 'T3 Code (Beta)', 'T3 Code (Nightly)' } | Select-Object -First 1 | ForEach-Object { [Console]::Write($$_) }"`
++    nsExec::ExecToStack `"$PowerShellPath" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | Where-Object { $$_.ExecutablePath -and [IO.Path]::GetDirectoryName($$_.ExecutablePath) -eq $$env:T3CODE_INSTALL_DIR } | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($$_.ExecutablePath) } | Where-Object { $$_ -in 'H3 Code (Alpha)', 'H3 Code (Beta)', 'H3 Code (Nightly)' } | Select-Object -First 1 | ForEach-Object { [Console]::Write($$_) }"`
+     Pop $0
+     Pop $1
+     System::Call 'kernel32::SetEnvironmentVariable(t "T3CODE_INSTALL_DIR", p 0)'
+     ${If} $0 == 0
+-      ${If} $1 == "T3 Code (Alpha)"
+-      ${OrIf} $1 == "T3 Code (Beta)"
+-      ${OrIf} $1 == "T3 Code (Nightly)"
++      ${If} $1 == "H3 Code (Alpha)"
++      ${OrIf} $1 == "H3 Code (Beta)"
++      ${OrIf} $1 == "H3 Code (Nightly)"
+         ${T3StrRep} $appRunningMessage $appRunningMessage "${PRODUCT_NAME}" $1
+         ${T3StrRep} $appClosingMessage $appClosingMessage "${PRODUCT_NAME}" $1
+         ${T3StrRep} $appCannotBeClosedMessage $appCannotBeClosedMessage "${PRODUCT_NAME}" $1
+diff --git a/apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml b/apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml
+index 0ae54a98..5659ded0 100644
+--- a/apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml
++++ b/apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml
+@@ -1,16 +1,16 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <component type="desktop-application">
+-  <id>com.t3tools.t3code</id>
++  <id>dev.hotchi.h3code</id>
+   <metadata_license>CC0-1.0</metadata_license>
+   <project_license>MIT</project_license>
+-  <name>T3 Code</name>
++  <name>H3 Code</name>
+   <summary>Desktop GUI for coding agents</summary>
+-  <developer id="com.t3tools">
+-    <name>T3 Tools Inc.</name>
++  <developer id="dev.hotchi">
++    <name>Hotchi</name>
+   </developer>
+   <description>
+     <p>
+-      T3 Code is an open-source desktop app for coding agents. Work with your
++      H3 Code is an open-source desktop app for coding agents. Work with your
+       existing agent subscriptions, review code changes, and run commands in
+       your projects.
+     </p>
+@@ -18,15 +18,15 @@
+       Connect from desktop, web, or mobile to continue working remotely.
+     </p>
+   </description>
+-  <launchable type="desktop-id">t3code.desktop</launchable>
+-  <icon type="stock">t3code</icon>
++  <launchable type="desktop-id">h3code.desktop</launchable>
++  <icon type="stock">h3code</icon>
+   <provides>
+-    <binary>t3code</binary>
++    <binary>h3code</binary>
+   </provides>
+   <categories>
+     <category>Development</category>
+   </categories>
+-  <url type="homepage">https://t3.codes</url>
+-  <url type="bugtracker">https://github.com/pingdotgg/t3code/issues</url>
+-  <url type="vcs-browser">https://github.com/pingdotgg/t3code</url>
++  <url type="homepage">https://github.com/hotchi-dev/h3code</url>
++  <url type="bugtracker">https://github.com/hotchi-dev/h3code/issues</url>
++  <url type="vcs-browser">https://github.com/hotchi-dev/h3code</url>
+ </component>
+diff --git a/apps/desktop/src/app/DesktopEarlyElectronStartup.ts b/apps/desktop/src/app/DesktopEarlyElectronStartup.ts
+index 3c571bcf..4489827a 100644
+--- a/apps/desktop/src/app/DesktopEarlyElectronStartup.ts
++++ b/apps/desktop/src/app/DesktopEarlyElectronStartup.ts
+@@ -31,7 +31,7 @@ export interface EarlyLinuxElectronOptions {
+ }
+ 
+ export const resolveLinuxDesktopEntryName = (isDevelopment: boolean): string =>
+-  isDevelopment ? "com.t3tools.T3Code.Development.desktop" : "com.t3tools.T3Code.desktop";
++  isDevelopment ? "dev.hotchi.H3Code.Development.desktop" : "dev.hotchi.H3Code.desktop";
+ 
+ const trimNonEmpty = (value: string | undefined): string | null => {
+   const trimmed = value?.trim();
+diff --git a/apps/desktop/src/app/DesktopEnvironment.ts b/apps/desktop/src/app/DesktopEnvironment.ts
+index d012b5af..f2847aac 100644
+--- a/apps/desktop/src/app/DesktopEnvironment.ts
++++ b/apps/desktop/src/app/DesktopEnvironment.ts
+@@ -86,7 +86,7 @@ export class DesktopEnvironment extends Context.Service<
+   }
+ >()("@t3tools/desktop/app/DesktopEnvironment") {}
+ 
+-const APP_BASE_NAME = "T3 Code";
++const APP_BASE_NAME = "H3 Code";
+ 
+ function resolveDesktopAppStageLabel(input: {
+   readonly isDevelopment: boolean;
+@@ -230,7 +230,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
+     branding,
+     displayName,
+     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
+-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
++      isDevelopment ? "dev.hotchi.h3code.dev" : "dev.hotchi.h3code",
+     ),
+     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
+     linuxApplicationsDir,
+diff --git a/apps/desktop/src/app/DesktopStartupRecovery.ts b/apps/desktop/src/app/DesktopStartupRecovery.ts
+index 768fe2ee..75728dc2 100644
+--- a/apps/desktop/src/app/DesktopStartupRecovery.ts
++++ b/apps/desktop/src/app/DesktopStartupRecovery.ts
+@@ -20,7 +20,7 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+ import * as DesktopObservability from "./DesktopObservability.ts";
+ import * as DesktopState from "./DesktopState.ts";
+ 
+-const RELEASES_URL = "https://github.com/pingdotgg/t3code/releases";
++const RELEASES_URL = "https://github.com/hotchi-dev/h3code/releases";
+ const LAST_STARTED_VERSION_FILE = "desktop-last-started-version";
+ // Buttons are plain links to this host; will-navigate cancels them and runs the action.
+ const ACTION_ORIGIN = "https://startup-recovery.invalid";
+diff --git a/apps/web/index.html b/apps/web/index.html
+index 7f8be6fa..b5dfde23 100644
+--- a/apps/web/index.html
++++ b/apps/web/index.html
+@@ -690,13 +690,13 @@
+       if (desktopDisplayName) document.title = desktopDisplayName;
+     </script>
+     <!-- vite.config.ts stamps the web build's channel into this title. -->
+-    <title>T3 Code</title>
++    <title>H3 Code</title>
+   </head>
+   <body>
+     <div id="root">
+       <div id="boot-shell">
+-        <div id="boot-shell-card" aria-label="T3 Code splash screen">
+-          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
++        <div id="boot-shell-card" aria-label="H3 Code splash screen">
++          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="H3 Code" />
+           <p id="boot-shell-progress" role="status" aria-live="polite"></p>
+         </div>
+       </div>
+diff --git a/packages/shared/src/cliRelease.ts b/packages/shared/src/cliRelease.ts
+index 07a0c73b..321112c4 100644
+--- a/packages/shared/src/cliRelease.ts
++++ b/packages/shared/src/cliRelease.ts
+@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
+ 
+ import { compareSemverVersions } from "./semver.ts";
+ 
+-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
++const CLI_RELEASE_REPOSITORY = "hotchi-dev/h3code";
+ export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
+ export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
+ export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
+diff --git a/scripts/build-desktop-artifact.ts b/scripts/build-desktop-artifact.ts
+index b6bb677f..103f8d06 100644
+--- a/scripts/build-desktop-artifact.ts
++++ b/scripts/build-desktop-artifact.ts
+@@ -63,7 +63,7 @@ import { Command, Flag } from "effect/cli";
+ import { ChildProcess, ChildProcessSpawner } from "effect/process";
+ 
+ const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
+-const DESKTOP_APP_ID = "com.t3tools.t3code";
++const DESKTOP_APP_ID = "dev.hotchi.h3code";
+ const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
+ 
+ const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
+@@ -2799,8 +2799,8 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
+ 
+ export function resolveDesktopProductName(version: string): string {
+   return resolveDesktopUpdateChannel(version) === "nightly"
+-    ? "T3 Code (Nightly)"
+-    : (desktopPackageJson.productName ?? "T3 Code");
++    ? "H3 Code (Nightly)"
++    : (desktopPackageJson.productName ?? "H3 Code");
+ }
+ 
+ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+@@ -2823,7 +2823,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
+     appId: DESKTOP_APP_ID,
+     productName: resolveDesktopProductName(version),
+-    artifactName: "T3-Code-${version}-${arch}.${ext}",
++    artifactName: "H3-Code-${version}-${arch}.${ext}",
+     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+     // runAsNode stays on: the app starts its server, helpers and the `t3` shim by running this
+     // binary as Node, and that mode still accepts inspector flags.
+@@ -2884,23 +2884,23 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+         // macOS 26 offers Messages/Mail codes in every text field unless opted out.
+         NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
+         NSLocalNetworkUsageDescription:
+-          "T3 Code connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
++          "H3 Code connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
+         NSCalendarsUsageDescription:
+-          "Commands you run in T3 Code may need access to your calendars.",
++          "Commands you run in H3 Code may need access to your calendars.",
+         NSCalendarsFullAccessUsageDescription:
+-          "Commands you run in T3 Code may need to read and write your calendar events.",
++          "Commands you run in H3 Code may need to read and write your calendar events.",
+         NSCalendarsWriteOnlyAccessUsageDescription:
+-          "Commands you run in T3 Code may need to add events to your calendars.",
++          "Commands you run in H3 Code may need to add events to your calendars.",
+         NSScreenCaptureUsageDescription:
+-          "T3 Code captures the active window when you use the window capture shortcut.",
++          "H3 Code captures the active window when you use the window capture shortcut.",
+         NSCameraUsageDescription:
+-          "T3 Code lets commands run by terminals and coding agents use the camera.",
++          "H3 Code lets commands run by terminals and coding agents use the camera.",
+         NSMicrophoneUsageDescription:
+-          "T3 Code lets commands run by terminals and coding agents use the microphone.",
++          "H3 Code lets commands run by terminals and coding agents use the microphone.",
+         NSAppleEventsUsageDescription:
+-          "T3 Code lets commands run by terminals and coding agents control other apps.",
++          "H3 Code lets commands run by terminals and coding agents control other apps.",
+         NSSpeechRecognitionUsageDescription:
+-          "T3 Code transcribes your dictation on this Mac when you choose Apple Speech.",
++          "H3 Code transcribes your dictation on this Mac when you choose Apple Speech.",
+         // macOS lists an app under Default web browser only when it opens web
+         // pages as documents as well as http and https links (see protocols).
+         CFBundleDocumentTypes: [
+@@ -2914,7 +2914,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+       },
+       protocols: [
+         {
+-          name: "T3 Code",
++          name: "H3 Code",
+           schemes: ["t3code", "t3code-dev"],
+         },
+         {
+@@ -2937,7 +2937,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+     buildConfig.dmg = {
+       // Finder caches DMG backgrounds by volume name; give each installer its own.
+       title: `${resolveDesktopProductName(version)} ${version} Installer`,
+-      background: `dmg/dmg-background-${updateChannel}.png`,
+       window: {
+         width: 640,
+         // DMG bounds include Finder's 32px title bar; keep that artwork strip clear.
+@@ -2960,21 +2959,21 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+     buildConfig.afterPack = path.join(repoRoot, "scripts/linux-after-pack.ts");
+     buildConfig.linux = {
+       target: target === "AppImage" ? [target, "deb"] : [target],
+-      executableName: "t3code",
++      executableName: "h3code",
+       icon: "icons",
+       category: "Development",
+       synopsis: "Desktop GUI for coding agents",
+-      maintainer: "T3 Tools <hello@t3.codes>",
++      maintainer: "Hotchi",
+       protocols: [
+         {
+-          name: "T3 Code",
++          name: "H3 Code",
+           schemes: ["t3code", "t3code-dev"],
+         },
+       ],
+       desktop: {
+         entry: {
+           // Match Electron's WM_CLASS from setDesktopName so docks use this launcher.
+-          StartupWMClass: "com.t3tools.T3Code",
++          StartupWMClass: "dev.hotchi.H3Code",
+         },
+       },
+     };
+@@ -2982,14 +2981,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+     if (buildConfig.publish) {
+       buildConfig.appImage = {
+         artifactName:
+-          updateChannel === "nightly" ? "T3-Code-Nightly-${arch}.${ext}" : "T3-Code-${arch}.${ext}",
++          updateChannel === "nightly" ? "H3-Code-Nightly-${arch}.${ext}" : "H3-Code-${arch}.${ext}",
+       };
+     }
+     buildConfig.deb = {
+       // FPM runs outside the staged app directory, so source paths must be absolute.
+       fpm: [
+-        `${path.join(repoRoot, "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml")}=/usr/share/metainfo/com.t3tools.t3code.metainfo.xml`,
+-        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/t3code/copyright`,
++        `${path.join(repoRoot, "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml")}=/usr/share/metainfo/dev.hotchi.h3code.metainfo.xml`,
++        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/h3code/copyright`,
+       ],
+       // Debian 13 and Ubuntu 24.04 use 64-bit-time names; retain old-name fallbacks.
+       depends: [
+@@ -3974,7 +3973,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
+     private: true,
+     packageManager: rootPackageJson.packageManager,
+     description:
+-      "T3 Code is an open-source desktop app for coding agents. Work with your existing agent subscriptions, review code changes, and run commands in your projects. Connect from desktop, web, or mobile to continue working remotely.",
++      "H3 Code is an open-source desktop app for coding agents. Work with your existing agent subscriptions, review code changes, and run commands in your projects. Connect from desktop, web, or mobile to continue working remotely.",
+     license: "MIT",
+     homepage: "https://t3.codes",
+     author: "T3 Tools",
+@@ -4302,7 +4301,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
+     Flag.optional,
+   ),
+ }).pipe(
+-  Command.withDescription("Build a desktop artifact for T3 Code."),
++  Command.withDescription("Build a desktop artifact for H3 Code."),
+   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
+ );
+ 
+-- 
+2.53.0
+

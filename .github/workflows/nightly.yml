@@ -1,0 +1,198 @@
+name: H3 Code nightly
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: An exact upstream nightly tag, or blank for the newest nightly
+        type: string
+      publish:
+        description: Publish the verified packages to GitHub Releases
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  select:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.upstream.outputs.tag }}
+      commit: ${{ steps.upstream.outputs.commit }}
+      build: ${{ steps.upstream.outputs.build }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Select the upstream nightly
+        id: upstream
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+          tag_pattern='^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$'
+          if [[ $GITHUB_EVENT_NAME == schedule || $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
+            tag=$REQUESTED_TAG
+            if [[ -z $tag ]]; then
+              tag=$(gh release list --repo pingdotgg/t3code --limit 50 --json tagName,isDraft |
+                jq -er --arg pattern "$tag_pattern" '[.[] | select(.isDraft == false and (.tagName | test($pattern)))][0].tagName')
+            fi
+            if [[ ! $tag =~ $tag_pattern ]]; then
+              echo 'Expected an upstream nightly tag' >&2
+              exit 1
+            fi
+            refs=$(git ls-remote --exit-code https://github.com/pingdotgg/t3code.git "refs/tags/$tag" "refs/tags/$tag^{}")
+            commit=$(awk '$2 ~ /\^\{\}$/ { peeled=$1 } { direct=$1 } END { print (peeled ? peeled : direct) }' <<< "$refs")
+          else
+            tag=$(jq -er .tag upstream.json)
+            commit=$(jq -er .commit upstream.json)
+          fi
+          if [[ ! $tag =~ $tag_pattern || ! $commit =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'Could not resolve an exact upstream nightly commit' >&2
+            exit 1
+          fi
+          build=true
+          if [[ $GITHUB_EVENT_NAME == schedule ]] && gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            build=false
+          fi
+          printf 'tag=%s\ncommit=%s\nbuild=%s\n' "$tag" "$commit" "$build" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: select
+    if: needs.select.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-build
+        with:
+          tag: ${{ needs.select.outputs.tag }}
+          commit: ${{ needs.select.outputs.commit }}
+      - name: Check the hub reader and settings
+        shell: bash
+        working-directory: _upstream
+        run: |
+          pnpm --dir apps/server exec vp test run src/usage/cliproxyApi.test.ts src/usage/UsageLimitSources.test.ts
+          pnpm --dir apps/server exec vp run typecheck
+          pnpm --dir apps/web exec vp run typecheck
+      - name: Install Linux desktop build libraries
+        run: sudo apt-get update && sudo apt-get install -y imagemagick pkg-config libgtk-3-dev libsecret-1-dev libxext-dev libxrandr-dev
+      - name: Package Linux
+        shell: bash
+        env:
+          UPSTREAM_TAG: ${{ needs.select.outputs.tag }}
+        run: scripts/package.sh _upstream linux x64 "$UPSTREAM_TAG" artifacts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: h3-linux-x64
+          path: |
+            artifacts/desktop/*.AppImage
+            artifacts/desktop/*.deb
+            artifacts/desktop/*-linux.yml
+            artifacts/desktop/*.blockmap
+            artifacts/cli/
+          if-no-files-found: error
+          compression-level: 0
+
+  desktop:
+    needs: [select, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            platform: mac
+            arch: arm64
+          - runner: windows-2025
+            platform: win
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-build
+        with:
+          tag: ${{ needs.select.outputs.tag }}
+          commit: ${{ needs.select.outputs.commit }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: matrix.platform == 'win'
+        with:
+          name: h3-linux-x64
+          path: _linux
+      - name: Package desktop
+        shell: bash
+        env:
+          UPSTREAM_TAG: ${{ needs.select.outputs.tag }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          if [[ $PLATFORM == win ]]; then
+            archives=("$PWD"/_linux/cli/t3-*-linux-x64.tar.gz)
+            scripts/package.sh _upstream "$PLATFORM" "$ARCH" "$UPSTREAM_TAG" artifacts "${archives[0]}"
+          else
+            scripts/package.sh _upstream "$PLATFORM" "$ARCH" "$UPSTREAM_TAG" artifacts
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: h3-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            artifacts/desktop/*.exe
+            artifacts/desktop/*.dmg
+            artifacts/desktop/*.zip
+            artifacts/desktop/*.yml
+            artifacts/desktop/*.blockmap
+            artifacts/cli/
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: [select, linux, desktop]
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      ((github.event_name == 'schedule' && vars.H3_PUBLISH_NIGHTLIES == 'true') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: h3-*
+          path: packages
+      - name: Publish this nightly
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ needs.select.outputs.tag }}
+          UPSTREAM_COMMIT: ${{ needs.select.outputs.commit }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(packages/h3-*/desktop/* packages/h3-*/cli/*)
+          linux=(packages/h3-linux-x64/desktop/*.AppImage)
+          mac=(packages/h3-mac-arm64/desktop/*.dmg)
+          windows=(packages/h3-win-x64/desktop/*.exe)
+          if [[ ${#linux[@]} != 1 || ${#mac[@]} != 1 || ${#windows[@]} != 1 ]]; then
+            echo 'Expected one desktop installer for each target' >&2
+            exit 1
+          fi
+          sha256sum "${assets[@]}" | sed 's|  packages/[^/]*/[^/]*/|  |' > SHA256SUMS
+          gh release create "$UPSTREAM_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "H3 Code $UPSTREAM_TAG" --prerelease \
+            --notes "Built from pingdotgg/t3code@$UPSTREAM_COMMIT. The desktop installers are unsigned." \
+            "${assets[@]}" SHA256SUMS

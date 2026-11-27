@@ -1,0 +1,26 @@
+name: Set up H3 Code build
+description: Prepare the pinned upstream checkout and install its toolchain
+inputs:
+  tag:
+    required: true
+  commit:
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Apply the overlay
+      shell: bash
+      env:
+        UPSTREAM_TAG: ${{ inputs.tag }}
+        UPSTREAM_COMMIT: ${{ inputs.commit }}
+      run: scripts/prepare.sh "$UPSTREAM_TAG" "$UPSTREAM_COMMIT" _upstream
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      with:
+        node-version-file: _upstream/package.json
+        package-manager-cache: false
+    - name: Install pnpm and dependencies
+      shell: bash
+      working-directory: _upstream
+      run: |
+        npm install --global "$(node -p "require('./package.json').packageManager")"
+        pnpm install --frozen-lockfile

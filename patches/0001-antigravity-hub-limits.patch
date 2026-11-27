@@ -1,0 +1,403 @@
+From a42b2d4bc9e428bdda4b7ff48b1233d4ac5a9dc9 Mon Sep 17 00:00:00 2001
+From: Emi Griffith <me@emigriffith.dev>
+Date: Fri, 27 Nov 2026 14:09:36 -0800
+Subject: [PATCH] Read opted-in Antigravity hub quotas as H3 Code
+
+Agent-Model: codex/gpt-6.2-sol
+---
+ apps/server/src/usage/UsageLimitSources.ts    |  3 +-
+ apps/server/src/usage/antigravityHubLimits.ts | 76 +++++++++++++++++++
+ apps/server/src/usage/cliproxyApi.test.ts     | 74 +++++++++++++++++-
+ apps/server/src/usage/cliproxyApi.ts          | 44 ++++++++++-
+ .../settings/UsageProviderSettings.tsx        | 58 +++++++++-----
+ docs/user/usage.md                            |  2 +
+ packages/contracts/src/settings.ts            |  1 +
+ 7 files changed, 235 insertions(+), 23 deletions(-)
+ create mode 100644 apps/server/src/usage/antigravityHubLimits.ts
+
+diff --git a/apps/server/src/usage/UsageLimitSources.ts b/apps/server/src/usage/UsageLimitSources.ts
+index b70541e4..422a83e3 100644
+--- a/apps/server/src/usage/UsageLimitSources.ts
++++ b/apps/server/src/usage/UsageLimitSources.ts
+@@ -102,6 +102,7 @@ function keepLastGoodReadings(
+       ...source,
+       accounts: source.accounts.map((account) => {
+         if (account.usageLimits.unavailable?.reason !== "probeFailed") return account;
++        if (account.driver === "antigravity") return account;
+         // Without a listed login, a reused auth file name cannot be told apart from the old one.
+         if (account.email === undefined && account.workspaceId === undefined) return account;
+         const last = before.accounts.find(
+@@ -196,7 +197,7 @@ export const make = Effect.gen(function* () {
+       return { ...base, accounts: [], error: missingManagementKey(config) };
+     }
+     const accounts = yield* api
+-      .readAccounts({ url: config.url, managementKey })
++      .readAccounts({ url: config.url, managementKey, antigravityLimits: config.antigravityLimits })
+       .pipe(Effect.result);
+     if (accounts._tag === "Failure") {
+       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
+diff --git a/apps/server/src/usage/antigravityHubLimits.ts b/apps/server/src/usage/antigravityHubLimits.ts
+new file mode 100644
+index 00000000..51c6f882
+--- /dev/null
++++ b/apps/server/src/usage/antigravityHubLimits.ts
+@@ -0,0 +1,76 @@
++import type { ServerProviderUsageWindow } from "@t3tools/contracts";
++import * as DateTime from "effect/DateTime";
++import * as Effect from "effect/Effect";
++import * as Option from "effect/Option";
++import * as Schema from "effect/Schema";
++
++const Bucket = Schema.Struct({
++  bucketId: Schema.NonEmptyString,
++  disabled: Schema.optional(Schema.Boolean),
++  window: Schema.optional(Schema.String),
++  displayName: Schema.optional(Schema.String),
++  description: Schema.optional(Schema.String),
++  remainingFraction: Schema.optional(Schema.Number),
++  resetTime: Schema.optional(Schema.String),
++});
++const Summary = Schema.Struct({
++  groups: Schema.optional(
++    Schema.Array(
++      Schema.Struct({
++        displayName: Schema.optional(Schema.String),
++        buckets: Schema.optional(Schema.Array(Bucket)),
++      }),
++    ),
++  ),
++  buckets: Schema.optional(Schema.Array(Bucket)),
++});
++const decodeSummary = Schema.decodeUnknownEffect(Schema.fromJsonString(Summary));
++
++function familyLabel(bucketId: string, groupName: string | undefined): string {
++  if (bucketId.startsWith("gemini-argon-")) return groupName || "Gemini Argon";
++  if (bucketId.startsWith("gemini-carbon-")) return groupName || "Gemini Carbon";
++  if (bucketId.startsWith("gemini-")) return "Gemini";
++  if (bucketId.startsWith("3p-")) return "Claude & GPT (shared)";
++  return groupName || bucketId;
++}
++
++function quotaWindows(summary: typeof Summary.Type, requestedAt: number) {
++  const windows = new Map<string, ServerProviderUsageWindow>();
++  const groups = summary.groups?.some((group) => group.buckets?.length)
++    ? summary.groups
++    : [{ buckets: summary.buckets, displayName: undefined }];
++  for (const group of groups ?? []) {
++    for (const bucket of group.buckets ?? []) {
++      const remaining = bucket.remainingFraction;
++      if (bucket.disabled || remaining === undefined || !Number.isFinite(remaining)) continue;
++      const weekly = bucket.window === "weekly";
++      const session = bucket.window === "5h";
++      const windowDurationMins = weekly ? 7 * 24 * 60 : session ? 5 * 60 : undefined;
++      const reset = bucket.resetTime ? DateTime.make(bucket.resetTime) : Option.none();
++      // An untouched bucket can return a moving end time instead of an actual reset.
++      const untouched =
++        remaining === 1 &&
++        bucket.description === undefined &&
++        windowDurationMins !== undefined &&
++        Option.isSome(reset) &&
++        Math.abs(DateTime.toEpochMillis(reset.value) - requestedAt - windowDurationMins * 60_000) <=
++          60_000;
++      const family = familyLabel(bucket.bucketId, group.displayName?.trim());
++      const period = weekly ? "Weekly" : session ? "5-hour" : bucket.displayName?.trim() || "Quota";
++      windows.set(bucket.bucketId, {
++        id: bucket.bucketId,
++        label: `${family} · ${period}`,
++        kind: weekly ? "weekly" : session ? "session" : "other",
++        usedPercent: (1 - Math.max(0, Math.min(1, remaining))) * 100,
++        ...(Option.isSome(reset) && !untouched
++          ? { resetsAt: DateTime.formatIso(reset.value) }
++          : {}),
++        ...(windowDurationMins === undefined ? {} : { windowDurationMins }),
++      });
++    }
++  }
++  return [...windows.values()];
++}
++
++export const readAntigravitySummaryWindows = (body: string, requestedAt: number) =>
++  decodeSummary(body).pipe(Effect.map((summary) => quotaWindows(summary, requestedAt)));
+diff --git a/apps/server/src/usage/cliproxyApi.test.ts b/apps/server/src/usage/cliproxyApi.test.ts
+index 08b6ec8c..429cbba0 100644
+--- a/apps/server/src/usage/cliproxyApi.test.ts
++++ b/apps/server/src/usage/cliproxyApi.test.ts
+@@ -537,7 +537,7 @@ describe("CLIProxyAPI built-in management API", () => {
+       const test = fixture({
+         accounts: [
+           { id: "kiro.json", auth_index: "k", provider: "kiro", email: "k@example.com" },
+-          // Antigravity only allows ACP clients, so its internal quota API is never called.
++          // H3 only reads Antigravity quotas when the hub opts in.
+           { id: "antigravity.json", auth_index: "g", provider: "antigravity", project_id: "p" },
+           { ...accounts[0]!, provider: "claude" },
+         ],
+@@ -550,6 +550,78 @@ describe("CLIProxyAPI built-in management API", () => {
+     }),
+   );
+ 
++  it.effect("uses one H3 Code user agent for opted-in Antigravity accounts", () =>
++    Effect.gen(function* () {
++      const test = fixture({
++        accounts: [
++          {
++            id: "antigravity.json",
++            auth_index: "g",
++            provider: "antigravity",
++            project_id: "p",
++            email: "shared@example.com",
++          },
++        ],
++        upstream: () => ({
++          status: 200,
++          // Shape from the quota summary reader in T3 Code before upstream PR #43026.
++          body: {
++            groups: [
++              { buckets: [{ bucketId: "gemini-5h", remainingFraction: 0.75, window: "5h" }] },
++            ],
++          },
++        }),
++      });
++      const api = yield* test.api;
++      for (const url of [config.url, "http://second-hub.test:8317"]) {
++        const result = yield* api.readAccounts({ ...config, url, antigravityLimits: true });
++        expect(result.unreadProviders).toEqual([]);
++        expect(result.accounts).toMatchObject([
++          {
++            driver: "antigravity",
++            email: "shared@example.com",
++            usageLimits: { windows: [{ id: "gemini-5h", kind: "session", usedPercent: 25 }] },
++          },
++        ]);
++      }
++      const calls = test.requests.flatMap(({ body }) => (body ? [body] : []));
++      expect(calls).toHaveLength(2);
++      for (const call of calls) {
++        expect(call).toMatchObject({
++          auth_index: "g",
++          method: "POST",
++          url: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
++          header: { "User-Agent": "H3Code" },
++          data: encodeJson({ project: "p" }),
++        });
++      }
++    }),
++  );
++
++  it.effect("reports a refused Antigravity quota read without another upstream request", () =>
++    Effect.gen(function* () {
++      const test = fixture({
++        accounts: [
++          { id: "antigravity.json", auth_index: "g", provider: "antigravity", project_id: "p" },
++        ],
++        upstream: () => ({ status: 403, body: { detail: "upstream response" } }),
++      });
++      const api = yield* test.api;
++      const result = yield* api.readAccounts({ ...config, antigravityLimits: true });
++      expect(result.accounts).toMatchObject([
++        {
++          usageLimits: {
++            unavailable: {
++              reason: "probeFailed",
++              message: "The provider refused the hub request (HTTP 403).",
++            },
++          },
++        },
++      ]);
++      expect(test.requests.filter((request) => request.body)).toHaveLength(1);
++    }),
++  );
++
+   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
+     Effect.gen(function* () {
+       const test = fixture();
+diff --git a/apps/server/src/usage/cliproxyApi.ts b/apps/server/src/usage/cliproxyApi.ts
+index 3d5cc0ea..3251e7a7 100644
+--- a/apps/server/src/usage/cliproxyApi.ts
++++ b/apps/server/src/usage/cliproxyApi.ts
+@@ -22,12 +22,17 @@ import {
+ import { codexPlanLabel } from "../provider/CodexProvider.ts";
+ import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
+ import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
+-import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
++import { readAntigravitySummaryWindows } from "./antigravityHubLimits.ts";
++import {
++  makeUnavailableUsageLimits,
++  makeUsageLimits,
++} from "@t3tools/provider-core/server/usageLimits";
+ 
+ /** A hub with its management key already read from wherever the setting keeps it. */
+ export interface CliproxyHub {
+   readonly url: UsageLimitSourceConfig["url"];
+   readonly managementKey: string;
++  readonly antigravityLimits?: boolean | undefined;
+ }
+ 
+ const AuthFile = Schema.Struct({
+@@ -36,6 +41,7 @@ const AuthFile = Schema.Struct({
+   provider: Schema.String,
+   email: Schema.optional(Schema.String),
+   disabled: Schema.optional(Schema.Boolean),
++  project_id: Schema.optional(Schema.String),
+   id_token: Schema.optional(
+     Schema.Struct({
+       chatgpt_account_id: Schema.optional(Schema.String),
+@@ -282,6 +288,34 @@ const CODEX_HUB: HubProvider = {
+ 
+ const GROK_CLI_VERSION = "1.0.77";
+ 
++const ANTIGRAVITY_HUB: HubProvider = {
++  driver: ProviderDriverKind.make("antigravity"),
++  header: () => ({
++    Authorization: "Bearer $TOKEN$",
++    "Content-Type": "application/json",
++    "User-Agent": "H3Code",
++  }),
++  read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
++    const project = account.project_id?.trim();
++    if (!project) {
++      return yield* new UsageLimitSourceError({
++        detail: "The hub did not report an Antigravity project.",
++      });
++    }
++    const body = yield* call(
++      "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
++      { project },
++    );
++    const windows = yield* readAntigravitySummaryWindows(body, Date.parse(checkedAt));
++    if (windows.length === 0) {
++      return yield* new UsageLimitSourceError({
++        detail: "Antigravity did not report any quota windows.",
++      });
++    }
++    return { ...listedIdentity(account), usageLimits: makeUsageLimits({ checkedAt, windows }) };
++  }),
++};
++
+ // Keyed by the auth-files `provider`; accounts of any other provider are skipped.
+ const HUB_PROVIDERS = new Map<string, HubProvider>([
+   ["codex", CODEX_HUB],
+@@ -466,14 +500,18 @@ export const makeCliproxyApi = Effect.gen(function* () {
+           : new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
+       ),
+     );
++    const providerFor = (provider: string) =>
++      provider === "antigravity" && hub.antigravityLimits
++        ? ANTIGRAVITY_HUB
++        : HUB_PROVIDERS.get(provider);
+     const readable = accounts.flatMap((account) => {
+-      const provider = HUB_PROVIDERS.get(account.provider);
++      const provider = providerFor(account.provider);
+       return provider && !account.disabled ? [{ account, provider }] : [];
+     });
+     const unreadProviders = [
+       ...new Set(
+         accounts.flatMap((account) =>
+-          account.disabled || HUB_PROVIDERS.has(account.provider) || !account.provider.trim()
++          account.disabled || providerFor(account.provider) || !account.provider.trim()
+             ? []
+             : [account.provider.trim()],
+         ),
+diff --git a/apps/web/src/components/settings/UsageProviderSettings.tsx b/apps/web/src/components/settings/UsageProviderSettings.tsx
+index 45789e84..d4c65212 100644
+--- a/apps/web/src/components/settings/UsageProviderSettings.tsx
++++ b/apps/web/src/components/settings/UsageProviderSettings.tsx
+@@ -14,6 +14,7 @@ import {
+   AlertDialogTitle,
+ } from "../ui/alert-dialog";
+ import { Button } from "../ui/button";
++import { Switch } from "../ui/switch";
+ import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
+ import { useSearchableSetting } from "./settingsSearch";
+ import { SettingsRow, SettingsSection } from "./settingsLayout";
+@@ -63,24 +64,45 @@ export function UsageProviderSettings({
+             const kindLabel = source.kind === "http" ? gt("HTTP quota source") : CLI_PROXY_NAME;
+             const label = source.label?.trim() || source.url;
+             return (
+-              <SettingsRow
+-                key={id}
+-                title={label}
+-                description={
+-                  <span className="break-all">
+-                    {source.enabled ? kindLabel : gt("{name} · Disabled", { name: kindLabel })}
+-                    {label !== source.url ? ` · ${source.url}` : ""}
+-                  </span>
+-                }
+-                control={
+-                  !readOnly ? (
+-                    <RemoveUsageProviderButton
+-                      label={label}
+-                      onConfirm={() => updateSettings({ usageLimitSources: { [id]: null } })}
+-                    />
+-                  ) : null
+-                }
+-              />
++              <div key={id}>
++                <SettingsRow
++                  title={label}
++                  description={
++                    <span className="break-all">
++                      {source.enabled ? kindLabel : gt("{name} · Disabled", { name: kindLabel })}
++                      {label !== source.url ? ` · ${source.url}` : ""}
++                    </span>
++                  }
++                  control={
++                    !readOnly ? (
++                      <RemoveUsageProviderButton
++                        label={label}
++                        onConfirm={() => updateSettings({ usageLimitSources: { [id]: null } })}
++                      />
++                    ) : null
++                  }
++                />
++                {source.kind === "cliproxy" && (
++                  <SettingsRow
++                    title={gt("Antigravity limits")}
++                    description={gt(
++                      "Read Antigravity limits through this hub. Google may restrict third-party quota requests.",
++                    )}
++                    control={
++                      <Switch
++                        checked={source.antigravityLimits ?? false}
++                        disabled={readOnly || !source.enabled}
++                        aria-label={gt("Antigravity limits for {hub}", { hub: label })}
++                        onCheckedChange={(antigravityLimits) =>
++                          updateSettings({
++                            usageLimitSources: { [id]: { ...source, antigravityLimits } },
++                          })
++                        }
++                      />
++                    }
++                  />
++                )}
++              </div>
+             );
+           })
+         )}
+diff --git a/docs/user/usage.md b/docs/user/usage.md
+index 9da54a1e..84b2cabd 100644
+--- a/docs/user/usage.md
++++ b/docs/user/usage.md
+@@ -45,6 +45,8 @@ Usage aggregates history across Codex, Claude Code, Grok Build, OpenCode, Antigr
+ 
+ Open **Settings → Providers → Usage providers → Add hub**, choose the environment, and enter the hub URL and management key. Pools Codex, Claude, and Grok accounts under **Usage → Limits** (including Codex **Use reset**). Configure the provider's endpoint to the same URL if you want threads to display that hub's limits.
+ 
++In H3 Code, turn on **Antigravity limits** on a configured hub to add its Antigravity accounts. H3 Code uses the same `H3Code` HTTP user agent from every installation. Shared provider accounts count once when the hub reports the same login. Google may refuse third-party quota requests, in which case the account appears with its latest quota read marked unavailable.
++
+ ## Connect an HTTP quota source
+ 
+ Open **Settings → Providers → Usage providers → Add HTTP source** with a GET endpoint (and optional bearer token) returning:
+diff --git a/packages/contracts/src/settings.ts b/packages/contracts/src/settings.ts
+index 630527f7..1ce5fd87 100644
+--- a/packages/contracts/src/settings.ts
++++ b/packages/contracts/src/settings.ts
+@@ -969,6 +969,7 @@ export const UsageLimitSourceConfig = Schema.Struct({
+   kind: Schema.Literals(["cliproxy", "http"]),
+   label: Schema.optional(TrimmedNonEmptyString),
+   url: TrimmedNonEmptyString,
++  antigravityLimits: Schema.optional(Schema.Boolean),
+   managementKey: SettingsSecretValue.pipe(
+     Schema.withDecodingDefault(Effect.succeed("")),
+     secretSetting,
+-- 
+2.53.0
+
