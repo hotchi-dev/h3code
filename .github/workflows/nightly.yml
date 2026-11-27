@@ -196,3 +196,31 @@ jobs:
             --title "H3 Code $UPSTREAM_TAG" --prerelease \
             --notes "Built from pingdotgg/t3code@$UPSTREAM_COMMIT. The desktop installers are unsigned." \
             "${assets[@]}" SHA256SUMS
+
+  notify:
+    needs: [select, linux, desktop, publish]
+    if: >-
+      always() && github.event_name != 'pull_request' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (needs.select.result == 'failure' || needs.linux.result == 'failure' ||
+       needs.desktop.result == 'failure' || needs.publish.result == 'failure')
+    runs-on: ubuntu-24.04
+    permissions: {}
+    timeout-minutes: 3
+    steps:
+      - name: Start a repair thread in T3 Code
+        shell: bash
+        env:
+          H3_REPAIR_WEBHOOK: ${{ secrets.H3_REPAIR_WEBHOOK }}
+        run: |
+          set -euo pipefail
+          if [[ -z $H3_REPAIR_WEBHOOK ]]; then
+            echo 'No T3 repair webhook is configured.'
+            exit 0
+          fi
+          payload="$RUNNER_TEMP/h3-failed-nightly.json"
+          jq -n --arg repo "$GITHUB_REPOSITORY" --arg run "$GITHUB_RUN_ID" \
+            '{repository: $repo, event: "nightly_failed", run_id: $run}' > "$payload"
+          printf 'url = "%s"\n' "$H3_REPAIR_WEBHOOK" |
+            curl --config - --silent --fail --output /dev/null --max-time 20 --retry 2 \
+              --header 'Content-Type: application/json' --data-binary "@$payload"

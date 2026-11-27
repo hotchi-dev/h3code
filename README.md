@@ -18,3 +18,5 @@ pnpm exec vp run build:desktop
 ```
 
 The GitHub workflow checks upstream for a new nightly every six hours and uses the pinned commit for pull requests. Linux x64, Windows x64, and macOS arm64 packages are available as Actions artifacts after a successful build. To make a release, run **H3 Code nightly** with **Publish the verified packages** selected. Set the repository variable `H3_PUBLISH_NIGHTLIES` to `true` to enable automatic releases.
+
+To start a repair thread after a default-branch build fails, configure a T3 Connect scheduled task with a webhook trigger and add its URL as the Actions secret `H3_REPAIR_WEBHOOK`. The event contains `repository`, `event: "nightly_failed"` and `run_id`. Use `run_id` to deduplicate deliveries and confirm the run in GitHub before acting on it.
