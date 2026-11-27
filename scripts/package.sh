@@ -51,6 +51,7 @@ mkdir -p "$artifacts/desktop" "$artifacts/cli"
 artifacts=$(cd "$artifacts" && pwd)
 cd "$source_dir"
 export T3CODE_DESKTOP_UPDATE_REPOSITORY=${T3CODE_DESKTOP_UPDATE_REPOSITORY:-hotchi-dev/h3code}
+export T3CODE_TELEMETRY_CHANNEL=dev
 
 packaging_args=()
 if [[ -n $wsl_archive ]]; then
@@ -64,6 +65,8 @@ monitor_dir=$(mktemp -d)
 trap 'rm -f "$monitor_dir/$monitor"; rmdir "$monitor_dir"' EXIT
 # Reuse the binary just built by desktop packaging.
 cp "native/resource-monitor/target/$rust_target/release/$monitor" "$monitor_dir/"
+pnpm exec node scripts/update-release-package-versions.ts "$version"
+pnpm exec node apps/server/scripts/cli.ts build-exe
 pnpm exec node scripts/build-cli-archive.ts \
   --platform "$platform" --arch "$arch" --version "$version" \
   --resource-monitor-dir "$monitor_dir" --output-dir "$artifacts/cli"

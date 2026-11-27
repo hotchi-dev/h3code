@@ -89,7 +89,7 @@ jobs:
           pnpm --dir apps/server exec vp run typecheck
           pnpm --dir apps/web exec vp run typecheck
       - name: Install Linux desktop build libraries
-        run: sudo apt-get update && sudo apt-get install -y imagemagick pkg-config libgtk-3-dev libsecret-1-dev libxext-dev libxrandr-dev
+        run: sudo apt-get update && sudo apt-get install -y imagemagick pkg-config libgtk-3-dev libsecret-1-dev libxext-dev libxrandr-dev libatomic1 patchelf
       - name: Package Linux
         shell: bash
         env:
@@ -154,7 +154,8 @@ jobs:
             artifacts/desktop/*.exe
             artifacts/desktop/*.dmg
             artifacts/desktop/*.zip
-            artifacts/desktop/*.yml
+            artifacts/desktop/nightly.yml
+            artifacts/desktop/nightly-mac.yml
             artifacts/desktop/*.blockmap
             artifacts/cli/
           if-no-files-found: error
