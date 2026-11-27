@@ -53,13 +53,17 @@ cd "$source_dir"
 export T3CODE_DESKTOP_UPDATE_REPOSITORY=${T3CODE_DESKTOP_UPDATE_REPOSITORY:-hotchi-dev/h3code}
 export T3CODE_TELEMETRY_CHANNEL=dev
 
-packaging_args=()
+packaging_args=(
+  --platform "$platform"
+  --target "$target"
+  --arch "$arch"
+  --build-version "$version"
+  --output-dir "$artifacts/desktop"
+)
 if [[ -n $wsl_archive ]]; then
   packaging_args+=(--wsl-runtime "$wsl_archive")
 fi
-pnpm exec vp run dist:desktop:artifact \
-  --platform "$platform" --target "$target" --arch "$arch" --build-version "$version" \
-  --output-dir "$artifacts/desktop" "${packaging_args[@]}"
+pnpm exec vp run dist:desktop:artifact "${packaging_args[@]}"
 
 monitor_dir=$(mktemp -d)
 trap 'rm -f "$monitor_dir/$monitor"; rmdir "$monitor_dir"' EXIT
